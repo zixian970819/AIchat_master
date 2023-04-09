@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""自动生成罗大佑风格的歌词。
+"""模仿道德经创作，并提供译文和讨论道德经相关内容。
 
 使用前请将 OPENAI_API_KEY 环境变量设成您的 openAI API key 值：
 
@@ -23,7 +23,7 @@ import sys
 
 defaultdict = collections.defaultdict
 
-LUO_DAYOU_LYRICS_FILE = "data/luo_dayou_lyrics.txt"
+LUO_DAYOU_LYRICS_FILE = "data/data.txt"
 NUM_CHARS_PER_SONG = 200
 
 
@@ -38,27 +38,26 @@ def ParseSongs(path: str) -> Dict[str, List[str]]:
     song = None
     for line in io.open(path, mode="r", encoding="utf-8").readlines():
         line = line.strip()
-        if line.startswith("《"):
-            title = line.lstrip("《").rstrip("》")
-            if title in songs:
-                sys.exit(f"歌曲《{title}》在 {path} 文件里出现了多次。")
+        if line.startswith("第"): # if it's title just ignore
+            title = line
             song = songs[title]
             continue
 
-        if not line or ("罗大佑" in line):
+        if not line:
             continue
-
         prefix = ""
         for ch in line:
+            if ch == "（" or ch=="第" or ch =="《" :  # ignore all characters after "(" and all chapter name
+                break
             if ord(ch) < 128 or ch in "　！…、—○《》":  # Treat non-Chinese as separater.
                 if prefix:
-                    assert song is not None, "在第一首歌名之前出现了歌词。"
+                    # assert song is not None, "Error: song subject cannot be None"
                     song.append(prefix)
                     prefix = ""
             else:
                 prefix += ch
         if prefix:
-            assert song is not None, "在第一首歌名之前出现了歌词。"
+            # assert song is not None, 
             song.append(prefix)
             prefix = ""
     return songs
@@ -130,6 +129,58 @@ def BuildQuadgramFrequencyMap(
         map[ch1][ch2][ch3][""] += 1
         map[ch2][ch3][""][""] += 1
         map[ch3][""][""][""] += 1
+    return map
+
+
+def BuildPantaFrequencyMap(
+    lines: List[str],
+) -> Dict[str, Dict[str, Dict[str, Dict[str, Dict[str, float]]]]]:
+    map: Dict[str, Dict[str, Dict[str, Dict[str, Dict[str, float]]]]] = defaultdict(lambda:defaultdict(
+        lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: 0))) )
+    )
+    for line in lines:
+        ch0 = ""
+        ch1 = ""
+        ch2 = ""
+        ch3 = ""
+        ch4 = ""
+        for ch4 in line:
+            map[ch0][ch1][ch2][ch3][ch4] += 1
+            ch0 = ch1
+            ch1 = ch2
+            ch2 = ch3
+            ch3 = ch4
+        map[ch1][ch2][ch3][ch4][""] += 1
+        map[ch2][ch3][ch4][""][""] += 1
+        map[ch3][ch4][""][""][""] += 1
+        map[ch4][""][""][""][""]+=1
+    return map
+
+def BuildSixthFrequencyMap(
+    lines: List[str],
+) -> Dict[str, Dict[str, Dict[str, Dict[str, Dict[str, Dict[str, float]]]]]]:
+    map: Dict[str, [str, Dict[str, Dict[str, Dict[str, Dict[str, float]]]]]] = defaultdict(lambda: defaultdict(lambda:defaultdict(
+        lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: 0)))) )
+    )
+    for line in lines:
+        ch0 = ""
+        ch1 = ""
+        ch2 = ""
+        ch3 = ""
+        ch4 = ""
+        ch5 = ""
+        for ch5 in line:
+            map[ch0][ch1][ch2][ch3][ch4][ch5] += 1
+            ch0 = ch1
+            ch1 = ch2
+            ch2 = ch3
+            ch3 = ch4
+            ch4 = ch5
+        map[ch1][ch2][ch3][ch4][ch5][""] += 1
+        map[ch2][ch3][ch4][ch5][""][""] += 1
+        map[ch3][ch4][ch5][""][""][""] += 1
+        map[ch4][ch5][""][""][""] [""]+= 1
+        map[ch5][""][""][""][""][""]+=1
     return map
 
 
@@ -277,6 +328,7 @@ def GetChar(text: str, index: int) -> str:
 
 def GetApiKey() -> str:
     api_key = os.getenv("OPENAI_API_KEY")
+    print(api_key)
     if not api_key:
         sys.exit("请首先将 OPENAI_API_KEY 环境变量设成您的 openAI API key。")
     return api_key
@@ -293,45 +345,10 @@ def GetSampleSong() -> Tuple[str, List[str]]:
     titles = sorted(songs.keys())
     for i, title in enumerate(titles):
         print(f"{i}. {title}")
-    index = input(f"请选择模仿哪一首歌 (0-{len(titles) - 1}): ")
+    index = input(f"请选择讨论哪一章节 (0-{len(titles) - 1}): ")
     index = int(index)
     title = titles[index]
     return title, songs[title]
-
-
-def GenerateLyricsByDavinci(subject: str, temperature: float, top_p: float) -> None:
-    """Generates lyrics using the Davinci model."""
-
-    api_key = GetApiKey()
-    _, sample = GetSampleSong()
-
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-    completion_endpoint = "https://api.openai.com/v1/completions"
-    prompt = (
-        "你是一个文学修养高深的流行歌曲词作者。写一首歌词。"
-        + (f"用“{subject}”做主题。" if subject else "")
-        + "模仿以下歌词风格：\n\n"
-    )
-    prompt += "\n".join(sample[:16])
-    while True:
-        print(f"您：\n{prompt}\n")
-        data = json.dumps(
-            {
-                "model": "text-davinci-003",
-                "prompt": prompt,
-                "max_tokens": 1024,
-                "temperature": temperature,
-                "top_p": top_p,
-                "frequency_penalty": 2,
-                "presence_penalty": 1,
-            }
-        )
-        result = requests.post(completion_endpoint, headers=headers, data=data)
-        answer = result.json()["choices"][0]["text"]
-        print()
-        print("Davinci的回答：")
-        print(answer)
-        prompt = input("请输入您的意见：")
 
 
 def MakeMessages(
@@ -380,13 +397,14 @@ def GenerateLyricsByChatGpt(subject: str, temperature: float, top_p: float) -> N
 
     api_key = GetApiKey()
     sample_title, sample_lyrics = GetSampleSong()
+    print(sample_title)
 
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-    hint = "你是一个文学修养高深的流行歌曲词作者。"
-    ask1 = f"用“{sample_title}”做主题写一首歌词"
+    hint = "你是一个文学修养高深的古文作者。你阅读过道德经并理解它的意思。"
+    ask1 = f"查看“{sample_title}”这一章节的原文"
     answer1 = "\n".join(sample_lyrics)
     conversation = [(ask1, answer1)]
-    new_ask = f"用“{subject}”做主题写一首歌词，模仿罗大佑的风格，比如前面这首"
+    new_ask = f"根据这章的主题写一首古文，模仿道德经的风格，比如前面这首"
 
     print(f"给chatGPT的提示：\n{hint}\n")
     print(f"您：\n{ask1}\n")
@@ -414,7 +432,7 @@ def GenerateLyricsByChatGpt(subject: str, temperature: float, top_p: float) -> N
         print(f"chatGPT的回答：\n{answer}\n")
 
         conversation.append((new_ask, answer))
-        new_ask = input("请输入您的意见：")
+        new_ask = input("请输入您的意见，或提出其他问题：")
 
 
 def main():
@@ -427,13 +445,13 @@ def main():
         default=False,
         action="store_true",
     )
-    parser.add_argument(
-        "-d",
-        "--davinci",
-        help="用 Davinci 模型来产生歌词",
-        default=False,
-        action="store_true",
-    )
+    # parser.add_argument(
+    #     "-d",
+    #     "--davinci",
+    #     help="用 Davinci 模型来产生歌词",
+    #     default=False,
+    #     action="store_true",
+    # )
     parser.add_argument(
         "-t",
         "--temperature",
@@ -474,6 +492,8 @@ def main():
     bi_freq_map = BuildBigramFrequencyMap(lines)
     tri_freq_map = BuildTrigramFrequencyMap(lines)
     quad_freq_map = BuildQuadgramFrequencyMap(lines)
+    panta_freq_map = BuildPantaFrequencyMap(lines)
+    sixth_freq_map = BuildSixthFrequencyMap(lines)
 
     lyrics = args.subject
     for _ in range(NUM_CHARS_PER_SONG):
@@ -484,7 +504,7 @@ def main():
             lyrics += ch
         else:
             lyrics += "\n"
-    print("----")
+    print("一阶----")
     print(lyrics)
 
     lyrics = args.subject
@@ -498,7 +518,7 @@ def main():
             lyrics += ch
         else:
             lyrics += "\n"
-    print("----")
+    print("二阶----")
     print(lyrics)
 
     lyrics = args.subject
@@ -517,7 +537,7 @@ def main():
             lyrics += "\n"
         ch0 = ch1
         ch1 = ch2
-    print("----")
+    print("三阶----")
     print(lyrics)
 
     lyrics = args.subject
@@ -540,7 +560,65 @@ def main():
         ch0 = ch1
         ch1 = ch2
         ch2 = ch3
-    print("----")
+    print("四阶----")
+    print(lyrics)
+
+    lyrics = args.subject
+    ch0 = GetChar(lyrics, -4)
+    ch1 = GetChar(lyrics, -3)
+    ch2 = GetChar(lyrics, -2)
+    ch3 = GetChar(lyrics, -1)
+    for _ in range(NUM_CHARS_PER_SONG):
+        freq_map: Dict[str, float] = panta_freq_map[ch0][ch1][ch2][ch3]
+        if len(freq_map) <= 1:
+            freq_map = quad_freq_map[ch1][ch2][ch3]
+        if len(freq_map) <= 1:
+            freq_map = tri_freq_map[ch2][ch3]
+        if len(freq_map) <= 1:
+            freq_map = bi_freq_map[ch3]
+        ch4 = WeightedSampleWithTemperatureTopP(
+            freq_map, temperature=args.temperature, top_p=args.top_p
+        )
+        if ch4:
+            lyrics += ch4
+        else:
+            lyrics += "\n"
+        ch0 = ch1
+        ch1 = ch2
+        ch2 = ch3
+        ch3 = ch4
+    print("五阶----")
+    print(lyrics)
+
+    lyrics = args.subject
+    ch0 = GetChar(lyrics, -5)
+    ch1 = GetChar(lyrics, -4)
+    ch2 = GetChar(lyrics, -3)
+    ch3 = GetChar(lyrics, -2)
+    ch4 = GetChar(lyrics, -1)
+    for _ in range(NUM_CHARS_PER_SONG):
+        freq_map: Dict[str, float] = sixth_freq_map[ch0][ch1][ch2][ch3][ch4]
+        if len(freq_map) <= 1:
+            freq_map = panta_freq_map[ch1][ch2][ch3][ch4]
+        if len(freq_map) <= 1:
+            freq_map = quad_freq_map[ch2][ch3][ch4]
+        if len(freq_map) <= 1:
+            freq_map = tri_freq_map[ch3][ch4]
+        if len(freq_map) <= 1:
+            freq_map = bi_freq_map[ch4]
+        ch5 = WeightedSampleWithTemperatureTopP(
+            freq_map, temperature=args.temperature, top_p=args.top_p
+        )
+        if ch5:
+            lyrics += ch5
+        else:
+            lyrics += "\n"
+        ch0 = ch1
+        ch1 = ch2
+        ch2 = ch3
+        ch3 = ch4
+        ch4 = ch5
+    print("六阶----")
     print(lyrics)
 
 
